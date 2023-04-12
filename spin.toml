@@ -1,0 +1,14 @@
+spin_version = "1"
+authors = ["Jason Washburn <jason@shyftsolutions.io>"]
+description = "A set of Spin components to make accessing weather data from AWS easier."
+name = "rusty-spinwx"
+trigger = { type = "http", base = "/" }
+version = "0.1.0"
+
+[[component]]
+id = "rusty-spinwx"
+source = "target/wasm32-wasi/release/rusty_spinwx.wasm"
+[component.trigger]
+route = "/..."
+[component.build]
+command = "cargo build --target wasm32-wasi --release"
