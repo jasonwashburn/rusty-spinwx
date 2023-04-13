@@ -1,5 +1,6 @@
-use std::{collections::HashMap, path};
-
+use std::{collections::HashMap};
+use chrono::{DateTime};
+use chrono::prelude::*;
 use anyhow::Result;
 use http::{HeaderMap, HeaderValue};
 use spin_sdk::{
@@ -7,12 +8,18 @@ use spin_sdk::{
     http_component,
 };
 
+const MODEL_HOUR_INTERVAL: i32 = 6;
+const NUM_EXPECTED_FORECASTS: i32 = 209;
+const S3_BUCKET: &str = "noaa-gfs-bdp-pds";
+
 /// A simple Spin HTTP component.
 #[http_component]
 fn rusty_spinwx(req: Request) -> Result<Response> {
     if let Some(query_params) = parse_query_params(req.headers()).unwrap() {
         dbg!(query_params);
     }
+    let today = chrono::Utc::now();
+    println!("{}", build_s3_key_prefix_for_grib(&today));
     Ok(http::Response::builder()
         .status(200)
         .header("foo", "bar")
@@ -36,4 +43,13 @@ fn parse_query_params(headers: &HeaderMap<HeaderValue>) -> Result<Option<HashMap
         }
     }
     Ok(Some(params))
+}
+
+// Builds the prefix for a GFS grib file given a model_run as a date time
+fn build_s3_key_prefix_for_grib(model_run: &DateTime<Utc>) -> String {
+    format!("{}", model_run.format("gfs.%Y%m%d/%H/atmos/gfs.t%Hz.pgrb2.0p25"))
+}
+
+fn fetch_list_of_grib_keys(grib_prefix: &str) {
+    let url = format!("https://{S3_BUCKET}.s3.amazonaws.com/?list-type=2&prefix={grib_prefix}");
 }
