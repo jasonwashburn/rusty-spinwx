@@ -86,8 +86,9 @@ mod api {
         if let Some(latest_run) = latest_run {
             let grib_prefix = build_grib_key_prefix(&latest_run);
             let grib_keys = fetch_list_of_grib_keys(&grib_prefix).unwrap();
-            response.insert(String::from("grib_keys"), grib_keys);
-            match serde_json::to_string(&response) {
+            let list_result = s3_utils::parse_list_bucket_result(&grib_keys).unwrap();
+            //response.insert(String::from("grib_keys"), grib_keys);
+            match serde_json::to_string(&list_result) {
                 Ok(json) => Ok(http::Response::builder()
                     .status(http::StatusCode::OK)
                     .body(Some(json.into()))?),
@@ -121,7 +122,6 @@ mod gfs {
 
     pub fn determine_latest_possible_run(now: DateTime<Utc>) -> Option<DateTime<Utc>> {
         let most_recent_run_hour = (now.hour() / 6) * 6;
-        println!("Remove this!! Latest hour fixed for troubleshooting");
         now.with_hour(most_recent_run_hour)?
             .with_minute(0)?
             .with_second(0)?
