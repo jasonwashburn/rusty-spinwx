@@ -1,7 +1,6 @@
 use anyhow::Result;
 use chrono::prelude::*;
 use chrono::DateTime;
-use http::{HeaderMap, HeaderValue};
 use spin_sdk::{
     http::{Params, Request, Response, Router},
     http_component,
@@ -49,6 +48,16 @@ mod api {
         if let Some(latest_run) = latest_run {
             let grib_prefix = build_grib_key_prefix(&latest_run);
             let grib_keys = fetch_list_of_grib_keys(&grib_prefix).unwrap();
+            let list_result = s3_utils::parse_list_bucket_result(&grib_keys).unwrap();
+            let available_forecasts: Vec<_> = list_result
+                .contents
+                .iter()
+                .filter(|content| (!content.key.ends_with(".anl") & !content.key.ends_with(".idx")))
+                .collect();
+            println!(
+                "S3 ListBucketResult contains {} keys.",
+                available_forecasts.len()
+            );
             response.insert(String::from("grib_keys"), grib_keys);
             match serde_json::to_string(&response) {
                 Ok(json) => Ok(http::Response::builder()
@@ -79,9 +88,8 @@ mod api {
 }
 
 mod gfs {
-    use std::ops::Sub;
 
-    use chrono::{DateTime, Duration, Timelike, Utc};
+    use chrono::{DateTime, Timelike, Utc};
 
     pub fn determine_latest_possible_run(now: DateTime<Utc>) -> Option<DateTime<Utc>> {
         let most_recent_run_hour = dbg!(((now.hour() / 6) * 6) - 6);
@@ -90,6 +98,38 @@ mod gfs {
             .with_minute(0)?
             .with_second(0)?
             .with_nanosecond(0)
+    }
+}
+
+mod s3_utils {
+    use anyhow::Result;
+    use serde::{Deserialize, Serialize};
+    #[derive(Debug, Serialize, Deserialize, PartialEq)]
+    #[serde(rename_all = "PascalCase")]
+    pub struct ListBucketResult {
+        pub name: String,
+        pub prefix: String,
+        pub key_count: i32,
+        pub max_keys: i32,
+        pub is_truncated: bool,
+        pub contents: Vec<Contents>,
+    }
+
+    #[derive(Debug, Serialize, Deserialize, PartialEq)]
+    #[serde(rename_all = "PascalCase")]
+    pub struct Contents {
+        pub key: String,
+        pub last_modified: String,
+        pub e_tag: String,
+        pub size: i32,
+        pub storage_class: String,
+    }
+
+    pub fn parse_list_bucket_result(xml: &str) -> Result<ListBucketResult> {
+        match serde_xml_rs::from_str(xml) {
+            Ok(list_result) => Ok(list_result),
+            Err(e) => Err(e.into()),
+        }
     }
 }
 
@@ -103,6 +143,7 @@ fn build_grib_key_prefix(model_run: &DateTime<Utc>) -> String {
 
 fn fetch_list_of_grib_keys(grib_prefix: &str) -> Result<String> {
     let url = format!("https://{S3_BUCKET}.s3.amazonaws.com/?list-type=2&prefix={grib_prefix}");
+    println!("Fetching from URL: {}", url);
     let mut resp = spin_sdk::outbound_http::send_request(
         http::Request::builder().method("GET").uri(url).body(None)?,
     )?;
