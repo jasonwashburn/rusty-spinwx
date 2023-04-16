@@ -22,42 +22,70 @@ fn handle_route(req: Request) -> Result<Response> {
 
 mod api {
 
+    use std::ops::Sub;
+
     use super::*;
 
-    pub fn gfs_latest(req: Request, params: Params) -> Result<Response> {
+    pub fn gfs_latest(_req: Request, _params: Params) -> Result<Response> {
         let mut response: HashMap<String, String> = HashMap::new();
         let now = Utc::now();
-        let latest_run = gfs::determine_latest_possible_run(now);
-        if let Some(latest_run) = latest_run {
-            response.insert(String::from("latest_run"), latest_run.to_string());
-            match serde_json::to_string(&response) {
-                Ok(json) => Ok(http::Response::builder()
-                    .status(http::StatusCode::OK)
-                    .body(Some(json.into()))?),
-                Err(e) => return_server_error(&e.to_string()),
+        let mut runs_to_try: Vec<DateTime<Utc>> = Vec::new();
+        let mut latest_run: Option<DateTime<Utc>> = None;
+        let latest_possible_run = gfs::determine_latest_possible_run(now);
+        if let Some(latest_possible_run) = latest_possible_run {
+            for i in 0..3 {
+                runs_to_try.push(
+                    latest_possible_run
+                        .sub(chrono::Duration::hours((MODEL_HOUR_INTERVAL * i) as i64)),
+                );
+            }
+            for run in runs_to_try {
+                if gfs_run_is_complete(run) {
+                    latest_run = Some(run);
+                    break;
+                }
+            }
+            match latest_run {
+                Some(latest) => {
+                    response.insert(String::from("latest_run"), latest.to_string());
+                    match serde_json::to_string(&response) {
+                        Ok(json) => Ok(http::Response::builder()
+                            .status(http::StatusCode::OK)
+                            .body(Some(json.into()))?),
+                        Err(e) => return_server_error(&e.to_string()),
+                    }
+                }
+                None => return_server_error("Unable to determine latest run"),
             }
         } else {
             return_server_error("Could not determine latest run.")
         }
     }
 
-    pub fn gfs_idx(req: Request, params: Params) -> Result<Response> {
+    pub fn gfs_run_is_complete(run: DateTime<Utc>) -> bool {
+        let grib_prefix = build_grib_key_prefix(&run);
+        let grib_keys = fetch_list_of_grib_keys(&grib_prefix).unwrap();
+        let list_result = s3_utils::parse_list_bucket_result(&grib_keys).unwrap();
+        if let Some(contents) = list_result.contents {
+            let available_forecasts: Vec<_> = contents
+                .iter()
+                .filter(|content| (!content.key.ends_with(".anl") & !content.key.ends_with(".idx")))
+                .collect();
+            let num_forecasts = available_forecasts.len();
+            println!("S3 ListBucketResult contains {} keys.", num_forecasts);
+            (num_forecasts as i32) >= NUM_EXPECTED_FORECASTS
+        } else {
+            false
+        }
+    }
+
+    pub fn gfs_idx(_req: Request, _params: Params) -> Result<Response> {
         let mut response: HashMap<String, String> = HashMap::new();
         let now = Utc::now();
         let latest_run = dbg!(gfs::determine_latest_possible_run(now));
         if let Some(latest_run) = latest_run {
             let grib_prefix = build_grib_key_prefix(&latest_run);
             let grib_keys = fetch_list_of_grib_keys(&grib_prefix).unwrap();
-            let list_result = s3_utils::parse_list_bucket_result(&grib_keys).unwrap();
-            let available_forecasts: Vec<_> = list_result
-                .contents
-                .iter()
-                .filter(|content| (!content.key.ends_with(".anl") & !content.key.ends_with(".idx")))
-                .collect();
-            println!(
-                "S3 ListBucketResult contains {} keys.",
-                available_forecasts.len()
-            );
             response.insert(String::from("grib_keys"), grib_keys);
             match serde_json::to_string(&response) {
                 Ok(json) => Ok(http::Response::builder()
@@ -70,7 +98,7 @@ mod api {
         }
     }
 
-    pub fn echo_wildcard(req: Request, params: Params) -> Result<Response> {
+    pub fn echo_wildcard(_req: Request, params: Params) -> Result<Response> {
         let capture = params.wildcard().unwrap_or_default();
         Ok(http::Response::builder()
             .status(http::StatusCode::OK)
@@ -92,7 +120,7 @@ mod gfs {
     use chrono::{DateTime, Timelike, Utc};
 
     pub fn determine_latest_possible_run(now: DateTime<Utc>) -> Option<DateTime<Utc>> {
-        let most_recent_run_hour = dbg!(((now.hour() / 6) * 6) - 6);
+        let most_recent_run_hour = (now.hour() / 6) * 6;
         println!("Remove this!! Latest hour fixed for troubleshooting");
         now.with_hour(most_recent_run_hour)?
             .with_minute(0)?
@@ -112,7 +140,7 @@ mod s3_utils {
         pub key_count: i32,
         pub max_keys: i32,
         pub is_truncated: bool,
-        pub contents: Vec<Contents>,
+        pub contents: Option<Vec<Contents>>,
     }
 
     #[derive(Debug, Serialize, Deserialize, PartialEq)]
