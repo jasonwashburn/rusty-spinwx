@@ -8,7 +8,9 @@ version = "0.1.0"
 [[component]]
 id = "rusty-spinwx"
 source = "target/wasm32-wasi/release/rusty_spinwx.wasm"
+
 [component.trigger]
 route = "/..."
 [component.build]
 command = "cargo build --target wasm32-wasi --release"
+watch = ["src/**/*.rs", "Cargo.toml"]
