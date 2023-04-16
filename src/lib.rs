@@ -16,6 +16,7 @@ const S3_BUCKET: &str = "noaa-gfs-bdp-pds";
 fn handle_route(req: Request) -> Result<Response> {
     let mut router = Router::new();
     router.get("/gfs/latest", api::gfs_latest);
+    router.get("/gfs/idx", api::gfs_idx);
     router.any("/*", api::echo_wildcard);
     router.handle(req)
 }
@@ -30,6 +31,25 @@ mod api {
         let latest_run = gfs::determine_latest_possible_run(now);
         if let Some(latest_run) = latest_run {
             response.insert(String::from("latest_run"), latest_run.to_string());
+            match serde_json::to_string(&response) {
+                Ok(json) => Ok(http::Response::builder()
+                    .status(http::StatusCode::OK)
+                    .body(Some(json.into()))?),
+                Err(e) => return_server_error(&e.to_string()),
+            }
+        } else {
+            return_server_error("Could not determine latest run.")
+        }
+    }
+
+    pub fn gfs_idx(req: Request, params: Params) -> Result<Response> {
+        let mut response: HashMap<String, String> = HashMap::new();
+        let now = Utc::now();
+        let latest_run = dbg!(gfs::determine_latest_possible_run(now));
+        if let Some(latest_run) = latest_run {
+            let grib_prefix = build_grib_key_prefix(&latest_run);
+            let grib_keys = fetch_list_of_grib_keys(&grib_prefix).unwrap();
+            response.insert(String::from("grib_keys"), grib_keys);
             match serde_json::to_string(&response) {
                 Ok(json) => Ok(http::Response::builder()
                     .status(http::StatusCode::OK)
@@ -59,44 +79,33 @@ mod api {
 }
 
 mod gfs {
-    use chrono::{DateTime, Timelike, Utc};
+    use std::ops::Sub;
+
+    use chrono::{DateTime, Duration, Timelike, Utc};
 
     pub fn determine_latest_possible_run(now: DateTime<Utc>) -> Option<DateTime<Utc>> {
-        let most_recent_run_hour = (now.hour() / 6) * 6;
+        let most_recent_run_hour = dbg!(((now.hour() / 6) * 6) - 6);
+        println!("Remove this!! Latest hour fixed for troubleshooting");
         now.with_hour(most_recent_run_hour)?
             .with_minute(0)?
             .with_second(0)?
-            .with_nanosecond(0);
-        None
+            .with_nanosecond(0)
     }
-}
-
-/// Parses the header to collect provided query parameters
-fn parse_query_params(headers: &HeaderMap<HeaderValue>) -> Result<Option<HashMap<&str, &str>>> {
-    let mut params = HashMap::new();
-    let full_url = headers.get("spin-full-url").unwrap().to_str().unwrap();
-    let host = headers.get("host").unwrap().to_str().unwrap();
-    let path_info = headers.get("spin-path-info").unwrap().to_str().unwrap();
-    let host_with_path = host.to_string() + path_info;
-    let query_string =
-        full_url.splitn(3, '/').collect::<Vec<&str>>()[2].trim_start_matches(&host_with_path);
-    if query_string.starts_with('?') {
-        for pair in query_string.trim_start_matches('?').split('&') {
-            let (key, value) = pair.split_once('=').unwrap();
-            params.insert(key, value);
-        }
-    }
-    Ok(Some(params))
 }
 
 // Builds the prefix for a GFS grib file given a model_run as a date time
-fn build_s3_key_prefix_for_grib(model_run: &DateTime<Utc>) -> String {
+fn build_grib_key_prefix(model_run: &DateTime<Utc>) -> String {
     format!(
         "{}",
         model_run.format("gfs.%Y%m%d/%H/atmos/gfs.t%Hz.pgrb2.0p25")
     )
 }
 
-fn fetch_list_of_grib_keys(grib_prefix: &str) {
+fn fetch_list_of_grib_keys(grib_prefix: &str) -> Result<String> {
     let url = format!("https://{S3_BUCKET}.s3.amazonaws.com/?list-type=2&prefix={grib_prefix}");
+    let mut resp = spin_sdk::outbound_http::send_request(
+        http::Request::builder().method("GET").uri(url).body(None)?,
+    )?;
+    let body = resp.body_mut().take().unwrap();
+    Ok(String::from_utf8_lossy(&body).to_string())
 }
