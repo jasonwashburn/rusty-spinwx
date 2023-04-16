@@ -14,9 +14,9 @@ const S3_BUCKET: &str = "noaa-gfs-bdp-pds";
 #[http_component]
 fn handle_route(req: Request) -> Result<Response> {
     let mut router = Router::new();
-    router.get("/gfs/latest", api::gfs_latest);
-    router.get("/gfs/idx", api::gfs_idx);
-    router.any("/*", api::echo_wildcard);
+    router.get("/gfs/latest", api::route_gfs_latest);
+    router.get("/gfs/idx", api::route_gfs_idx);
+    router.any("/*", api::route_echo_wildcard);
     router.handle(req)
 }
 
@@ -25,8 +25,10 @@ mod api {
     use std::ops::Sub;
 
     use super::*;
+    use gfs::gfs_run_is_complete;
+    use s3_utils::{build_grib_key_prefix, fetch_list_of_grib_keys};
 
-    pub fn gfs_latest(_req: Request, _params: Params) -> Result<Response> {
+    pub fn route_gfs_latest(_req: Request, _params: Params) -> Result<Response> {
         let mut response: HashMap<String, String> = HashMap::new();
         let now = Utc::now();
         let mut runs_to_try: Vec<DateTime<Utc>> = Vec::new();
@@ -62,24 +64,7 @@ mod api {
         }
     }
 
-    pub fn gfs_run_is_complete(run: DateTime<Utc>) -> bool {
-        let grib_prefix = build_grib_key_prefix(&run);
-        let grib_keys = fetch_list_of_grib_keys(&grib_prefix).unwrap();
-        let list_result = s3_utils::parse_list_bucket_result(&grib_keys).unwrap();
-        if let Some(contents) = list_result.contents {
-            let available_forecasts: Vec<_> = contents
-                .iter()
-                .filter(|content| (!content.key.ends_with(".anl") & !content.key.ends_with(".idx")))
-                .collect();
-            let num_forecasts = available_forecasts.len();
-            println!("S3 ListBucketResult contains {} keys.", num_forecasts);
-            (num_forecasts as i32) >= NUM_EXPECTED_FORECASTS
-        } else {
-            false
-        }
-    }
-
-    pub fn gfs_idx(_req: Request, _params: Params) -> Result<Response> {
+    pub fn route_gfs_idx(_req: Request, _params: Params) -> Result<Response> {
         let mut response: HashMap<String, String> = HashMap::new();
         let now = Utc::now();
         let latest_run = dbg!(gfs::determine_latest_possible_run(now));
@@ -99,7 +84,7 @@ mod api {
         }
     }
 
-    pub fn echo_wildcard(_req: Request, params: Params) -> Result<Response> {
+    pub fn route_echo_wildcard(_req: Request, params: Params) -> Result<Response> {
         let capture = params.wildcard().unwrap_or_default();
         Ok(http::Response::builder()
             .status(http::StatusCode::OK)
@@ -118,8 +103,28 @@ mod api {
 
 mod gfs {
 
+    use super::NUM_EXPECTED_FORECASTS;
+    use crate::s3_utils::{
+        build_grib_key_prefix, fetch_list_of_grib_keys, parse_list_bucket_result,
+    };
     use chrono::{DateTime, Timelike, Utc};
 
+    pub fn gfs_run_is_complete(run: DateTime<Utc>) -> bool {
+        let grib_prefix = build_grib_key_prefix(&run);
+        let grib_keys = fetch_list_of_grib_keys(&grib_prefix).unwrap();
+        let list_result = parse_list_bucket_result(&grib_keys).unwrap();
+        if let Some(contents) = list_result.contents {
+            let available_forecasts: Vec<_> = contents
+                .iter()
+                .filter(|content| (!content.key.ends_with(".anl") & !content.key.ends_with(".idx")))
+                .collect();
+            let num_forecasts = available_forecasts.len();
+            println!("S3 ListBucketResult contains {} keys.", num_forecasts);
+            (num_forecasts as i32) >= NUM_EXPECTED_FORECASTS
+        } else {
+            false
+        }
+    }
     pub fn determine_latest_possible_run(now: DateTime<Utc>) -> Option<DateTime<Utc>> {
         let most_recent_run_hour = (now.hour() / 6) * 6;
         now.with_hour(most_recent_run_hour)?
@@ -130,6 +135,7 @@ mod gfs {
 }
 
 mod s3_utils {
+    use super::*;
     use anyhow::Result;
     use serde::{Deserialize, Serialize};
     #[derive(Debug, Serialize, Deserialize, PartialEq)]
@@ -159,22 +165,22 @@ mod s3_utils {
             Err(e) => Err(e.into()),
         }
     }
-}
 
-// Builds the prefix for a GFS grib file given a model_run as a date time
-fn build_grib_key_prefix(model_run: &DateTime<Utc>) -> String {
-    format!(
-        "{}",
-        model_run.format("gfs.%Y%m%d/%H/atmos/gfs.t%Hz.pgrb2.0p25")
-    )
-}
+    // Builds the prefix for a GFS grib file given a model_run as a date time
+    pub fn build_grib_key_prefix(model_run: &DateTime<Utc>) -> String {
+        format!(
+            "{}",
+            model_run.format("gfs.%Y%m%d/%H/atmos/gfs.t%Hz.pgrb2.0p25")
+        )
+    }
 
-fn fetch_list_of_grib_keys(grib_prefix: &str) -> Result<String> {
-    let url = format!("https://{S3_BUCKET}.s3.amazonaws.com/?list-type=2&prefix={grib_prefix}");
-    println!("Fetching from URL: {}", url);
-    let mut resp = spin_sdk::outbound_http::send_request(
-        http::Request::builder().method("GET").uri(url).body(None)?,
-    )?;
-    let body = resp.body_mut().take().unwrap();
-    Ok(String::from_utf8_lossy(&body).to_string())
+    pub fn fetch_list_of_grib_keys(grib_prefix: &str) -> Result<String> {
+        let url = format!("https://{S3_BUCKET}.s3.amazonaws.com/?list-type=2&prefix={grib_prefix}");
+        println!("Fetching from URL: {}", url);
+        let mut resp = spin_sdk::outbound_http::send_request(
+            http::Request::builder().method("GET").uri(url).body(None)?,
+        )?;
+        let body = resp.body_mut().take().unwrap();
+        Ok(String::from_utf8_lossy(&body).to_string())
+    }
 }
