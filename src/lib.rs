@@ -16,6 +16,10 @@ fn handle_route(req: Request) -> Result<Response> {
     let mut router = Router::new();
     router.get("/gfs/latest", api::route_gfs_latest);
     router.get("/gfs/idx", api::route_gfs_idx);
+    router.get(
+        "/gfs/idx/:year/:month/:day/:hour/:forecast",
+        api::route_gfs_idx_info,
+    );
     router.any("/*", api::route_echo_wildcard);
     router.handle(req)
 }
@@ -81,6 +85,46 @@ mod api {
             }
         } else {
             return_server_error("Could not determine latest run.")
+        }
+    }
+
+    pub fn route_gfs_idx_info(_req: Request, params: Params) -> Result<Response> {
+        let mut response: HashMap<String, i32> = HashMap::new();
+        let year = params
+            .get("year")
+            .unwrap_or_default()
+            .parse::<i32>()
+            .unwrap_or_default();
+        let month = params
+            .get("month")
+            .unwrap_or_default()
+            .parse::<i32>()
+            .unwrap_or_default();
+        let day = params
+            .get("day")
+            .unwrap_or_default()
+            .parse::<i32>()
+            .unwrap_or_default();
+        let hour = params
+            .get("hour")
+            .unwrap_or_default()
+            .parse::<i32>()
+            .unwrap_or_default();
+        let forecast = params
+            .get("forecast")
+            .unwrap_or_default()
+            .parse::<i32>()
+            .unwrap_or_default();
+        response.insert(String::from("year"), year);
+        response.insert(String::from("month"), month);
+        response.insert(String::from("day"), day);
+        response.insert(String::from("hour"), hour);
+        response.insert(String::from("forecast"), forecast);
+        match serde_json::to_string(&response) {
+            Ok(json) => Ok(http::Response::builder()
+                .status(http::StatusCode::OK)
+                .body(Some(json.into()))?),
+            Err(e) => return_server_error(&e.to_string()),
         }
     }
 
@@ -182,5 +226,9 @@ mod s3_utils {
         )?;
         let body = resp.body_mut().take().unwrap();
         Ok(String::from_utf8_lossy(&body).to_string())
+    }
+
+    pub fn build_grib_idx_key(year: i32, month: i32, day: i32, hour: i32, forecast: i32) -> String {
+        format!("gfs.{year:02}{month:02}{day:02}/{hour:02}/atmos/gfs.t{hour:02}z.pgrb2.0p25.f{forecast:03}.idx")
     }
 }
