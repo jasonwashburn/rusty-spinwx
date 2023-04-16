@@ -37,7 +37,7 @@ mod api {
                 Err(e) => return_server_error(&e.to_string()),
             }
         } else {
-            return_server_error("Could not determine latest run")
+            return_server_error("Could not determine latest run.")
         }
     }
 
@@ -49,9 +49,12 @@ mod api {
     }
 
     pub fn return_server_error(message: &str) -> Result<Response> {
+        let mut response = HashMap::new();
+        response.insert("error".to_string(), message.to_string());
+        let response = serde_json::to_string(&response)?;
         Ok(http::Response::builder()
             .status(http::StatusCode::INTERNAL_SERVER_ERROR)
-            .body(Some(message.to_string().into()))?)
+            .body(Some(response.into()))?)
     }
 }
 
@@ -63,7 +66,8 @@ mod gfs {
         now.with_hour(most_recent_run_hour)?
             .with_minute(0)?
             .with_second(0)?
-            .with_nanosecond(0)
+            .with_nanosecond(0);
+        None
     }
 }
 
