@@ -17,7 +17,7 @@ fn handle_route(req: Request) -> Result<Response> {
     router.get("/gfs/latest", api::route_gfs_latest);
     router.get("/gfs/idx", api::route_gfs_idx);
     router.get(
-        "/gfs/idx/:year/:month/:day/:hour/:forecast",
+        "/gfs/idx/:year/:month/:day/:hour/:forecast*",
         api::route_gfs_idx_info,
     );
     router.any("/*", api::route_echo_wildcard);
@@ -88,7 +88,7 @@ mod api {
         }
     }
 
-    pub fn route_gfs_idx_info(_req: Request, params: Params) -> Result<Response> {
+    pub fn route_gfs_idx_info(req: Request, params: Params) -> Result<Response> {
         let year = params
             .get("year")
             .unwrap_or_default()
@@ -114,6 +114,8 @@ mod api {
             .unwrap_or_default()
             .parse::<i32>()
             .unwrap_or_default();
+        dbg!(&req);
+        dbg!(&params);
 
         let idx_key = build_grib_idx_key(year, month, day, hour, forecast);
         let idx_data = s3_utils::get_s3_object(S3_BUCKET, &idx_key).unwrap();
