@@ -17,7 +17,7 @@ fn handle_route(req: Request) -> Result<Response> {
     router.get("/gfs/latest", api::route_gfs_latest);
     router.get("/gfs/idx", api::route_gfs_idx);
     router.get(
-        "/gfs/idx/:year/:month/:day/:hour/:forecast*",
+        "/gfs/idx/:year/:month/:day/:hour/:forecast",
         api::route_gfs_idx_info,
     );
     router.any("/*", api::route_echo_wildcard);
@@ -116,15 +116,33 @@ mod api {
             .unwrap_or_default();
         dbg!(&req);
         dbg!(&params);
+        let mut query_map: Option<HashMap<String, String>> = None;
+        let mut level_filter: Option<String> = None;
+        let mut param_filter: Option<String> = None;
+        let uri = req.uri().to_string();
+        if let Some(query_string) = uri.split_once('?') {
+            dbg!(&query_string);
+            let query_map = parse_query_string(query_string.1);
+            dbg!(&query_map);
+            if let Some(level_to_filter) = query_map.get("level") {
+                level_filter = Some(level_to_filter.to_string());
+                dbg!(&level_filter);
+            }
+        }
 
         let idx_key = build_grib_idx_key(year, month, day, hour, forecast);
         let idx_data = s3_utils::get_s3_object(S3_BUCKET, &idx_key).unwrap();
-        let idx_entries = gfs::parse_idx_file(&idx_data).unwrap();
+        let mut idx_collection = gfs::parse_idx_file(&idx_data).unwrap();
         // response.insert(String::from("year"), year);
         // response.insert(String::from("month"), month);
         // response.insert(String::from("day"), day);
         // response.insert(String::from("hour"), hour);
         // response.insert(String::from("forecast"), forecast);
+        let mut idx_entries = idx_collection.records;
+        dbg!(&level_filter);
+        if let Some(level_filter) = level_filter {
+            idx_entries.retain(|entry| entry.level == level_filter);
+        }
         match serde_json::to_string(&idx_entries) {
             Ok(json) => Ok(http::Response::builder()
                 .status(http::StatusCode::OK)
@@ -147,6 +165,17 @@ mod api {
         Ok(http::Response::builder()
             .status(http::StatusCode::INTERNAL_SERVER_ERROR)
             .body(Some(response.into()))?)
+    }
+
+    pub fn parse_query_string(query_string: &str) -> HashMap<String, String> {
+        let mut query_params: HashMap<String, String> = HashMap::new();
+        for param in query_string.split('&') {
+            let pair: Vec<&str> = param.split('=').collect();
+            let key = pair[0];
+            let value = pair[1];
+            query_params.insert(key.to_string(), value.to_string());
+        }
+        query_params
     }
 }
 
@@ -184,18 +213,33 @@ mod gfs {
     }
 
     #[derive(Debug, Serialize, Deserialize, PartialEq)]
-    pub struct IdxEntry {
+    pub struct IdxRecord {
         index: i32,
-        start_byte: i32,
-        stop_byte: Option<i32>,
+        pub start_byte: i32,
+        pub stop_byte: Option<i32>,
         model_run: String,
-        parameter: String,
-        level: String,
+        pub parameter: String,
+        pub level: String,
         forecast_type: String,
     }
 
-    pub fn parse_idx_file(idx_data: &str) -> Result<Vec<IdxEntry>> {
-        let mut idx_entries: Vec<IdxEntry> = Vec::new();
+    pub struct IdxCollection {
+        pub records: Vec<IdxRecord>,
+    }
+
+    impl IdxCollection {
+        pub fn new() -> IdxCollection {
+            IdxCollection {
+                records: Vec::new(),
+            }
+        }
+        pub fn add_entry(&mut self, entry: IdxRecord) {
+            self.records.push(entry);
+        }
+    }
+
+    pub fn parse_idx_file(idx_data: &str) -> Result<IdxCollection> {
+        let mut idx_collection = IdxCollection::new();
         let mut prev_start_byte: Option<i32> = None;
         for line in idx_data.lines().rev() {
             let split_line: Vec<&str> = line.split(':').collect();
@@ -206,7 +250,7 @@ mod gfs {
             let level = split_line[4];
             let forecast_type = split_line[5];
 
-            idx_entries.push(IdxEntry {
+            idx_collection.add_entry(IdxRecord {
                 index: index.parse::<i32>().unwrap(),
                 start_byte: start_byte.parse::<i32>().unwrap(),
                 stop_byte: prev_start_byte,
@@ -217,8 +261,8 @@ mod gfs {
             });
             prev_start_byte = start_byte.parse::<i32>().ok();
         }
-        idx_entries.reverse();
-        Ok(idx_entries)
+        idx_collection.records.reverse();
+        Ok(idx_collection)
     }
 }
 
