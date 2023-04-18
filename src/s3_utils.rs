@@ -1,5 +1,6 @@
 use super::*;
 use anyhow::Result;
+use http::request::Builder;
 use serde::{Deserialize, Serialize};
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "PascalCase")]
@@ -47,16 +48,37 @@ pub fn fetch_list_of_grib_keys(grib_prefix: &str) -> Result<String> {
     Ok(String::from_utf8_lossy(&body).to_string())
 }
 
-pub fn get_s3_object(bucket: &str, key: &str) -> Result<String> {
+pub fn get_s3_object(
+    bucket: &str,
+    key: &str,
+    byte_range: Option<(i32, Option<i32>)>,
+) -> Result<String> {
     let url = format!("https://{bucket}.s3.amazonaws.com/{key}");
     println!("Fetching S3 object from URL: {}", url);
-    let mut resp = spin_sdk::outbound_http::send_request(
-        http::Request::builder().method("GET").uri(url).body(None)?,
-    )?;
+    let mut request: Request = http::Request::builder().method("GET").uri(url).body(None)?;
+    if let Some(byte_range) = byte_range {
+        request.headers_mut().insert(
+            "Range",
+            format!(
+                "bytes={start}-{stop}",
+                start = byte_range.0,
+                stop = byte_range.1.unwrap()
+            )
+            .parse()
+            .unwrap(),
+        );
+    }
+    let mut resp = spin_sdk::outbound_http::send_request(request)?;
     let body = resp.body_mut().take().unwrap();
     Ok(String::from_utf8_lossy(&body).to_string())
 }
 
 pub fn build_grib_idx_key(year: i32, month: i32, day: i32, hour: i32, forecast: i32) -> String {
     format!("gfs.{year:02}{month:02}{day:02}/{hour:02}/atmos/gfs.t{hour:02}z.pgrb2.0p25.f{forecast:03}.idx")
+}
+
+pub fn build_grib_file_key(year: i32, month: i32, day: i32, hour: i32, forecast: i32) -> String {
+    format!(
+        "gfs.{year:02}{month:02}{day:02}/{hour:02}/atmos/gfs.t{hour:02}z.pgrb2.0p25.f{forecast:03}"
+    )
 }

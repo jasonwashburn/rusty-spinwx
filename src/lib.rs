@@ -23,6 +23,10 @@ fn handle_route(req: Request) -> Result<Response> {
         "/gfs/idx/:year/:month/:day/:hour/:forecast",
         api::route_gfs_idx_info,
     );
+    router.get(
+        "/gfs/grib/:year/:month/:day/:hour/:forecast/:parameter/:level",
+        api::route_gfs_grib,
+    );
     router.any("/*", api::route_echo_wildcard);
     router.handle(req)
 }
@@ -133,11 +137,11 @@ mod api {
             dbg!(&query_map);
         }
 
+        // Make me an external function
         let idx_key = build_grib_idx_key(year, month, day, hour, forecast);
-        let idx_data = s3_utils::get_s3_object(S3_BUCKET, &idx_key).unwrap();
+        let idx_data = s3_utils::get_s3_object(S3_BUCKET, &idx_key, None).unwrap();
         let mut idx_collection = gfs::parse_idx_file(&idx_data).unwrap();
 
-        // Make me an external function
         for (key, value) in query_map {
             match key.as_str() {
                 "level" => {
@@ -151,6 +155,7 @@ mod api {
                 _ => {}
             }
         }
+        //
 
         match serde_json::to_string(&idx_collection.records) {
             Ok(json) => Ok(http::Response::builder()
@@ -158,6 +163,66 @@ mod api {
                 .body(Some(json.into()))?),
             Err(_) => internal_server_error(),
         }
+    }
+
+    pub fn route_gfs_grib(req: Request, params: Params) -> Result<Response> {
+        let year = params
+            .get("year")
+            .unwrap_or_default()
+            .parse::<i32>()
+            .unwrap_or_default();
+        let month = params
+            .get("month")
+            .unwrap_or_default()
+            .parse::<i32>()
+            .unwrap_or_default();
+        let day = params
+            .get("day")
+            .unwrap_or_default()
+            .parse::<i32>()
+            .unwrap_or_default();
+        let hour = params
+            .get("hour")
+            .unwrap_or_default()
+            .parse::<i32>()
+            .unwrap_or_default();
+        let forecast = params
+            .get("forecast")
+            .unwrap_or_default()
+            .parse::<i32>()
+            .unwrap_or_default();
+        let level = params
+            .get("level")
+            .unwrap_or_default()
+            .parse::<String>()
+            .unwrap_or_default();
+        let parameter = params
+            .get("parameter")
+            .unwrap_or_default()
+            .parse::<String>()
+            .unwrap_or_default();
+
+        let idx_key = build_grib_idx_key(year, month, day, hour, forecast);
+        let idx_data = s3_utils::get_s3_object(S3_BUCKET, &idx_key, None).unwrap();
+        let mut idx_collection = gfs::parse_idx_file(&idx_data).unwrap();
+
+        idx_collection
+            .records
+            .retain(|record| record.level == level.to_lowercase());
+        idx_collection
+            .records
+            .retain(|record| record.parameter == parameter.to_uppercase());
+
+        let grib_record = idx_collection.records.first().unwrap();
+        let start_byte = grib_record.start_byte;
+        let stop_byte = grib_record.stop_byte;
+        let byte_range = (start_byte, stop_byte);
+
+        let grib_key = s3_utils::build_grib_file_key(year, month, day, hour, forecast);
+        let grib_data = s3_utils::get_s3_object(S3_BUCKET, &grib_key, Some(byte_range)).unwrap();
+        Ok(http::Response::builder()
+            .status(http::StatusCode::OK)
+            .body(Some(grib_data.into()))?)
     }
 
     pub fn route_echo_wildcard(_req: Request, params: Params) -> Result<Response> {
