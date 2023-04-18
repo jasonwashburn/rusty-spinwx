@@ -56,7 +56,7 @@ impl IdxCollection {
 
 pub fn parse_idx_file(idx_data: &str) -> Result<IdxCollection> {
     let mut idx_collection = IdxCollection::new();
-    let mut prev_start_byte: Option<i32> = None;
+    let mut next_stop_byte: Option<i32> = None;
     for line in idx_data.lines().rev() {
         let split_line: Vec<&str> = line.split(':').collect();
         let index = split_line[0];
@@ -69,13 +69,13 @@ pub fn parse_idx_file(idx_data: &str) -> Result<IdxCollection> {
         idx_collection.add_entry(IdxRecord {
             index: index.parse::<i32>().unwrap(),
             start_byte: start_byte.parse::<i32>().unwrap(),
-            stop_byte: prev_start_byte,
+            stop_byte: next_stop_byte,
             model_run: model_run.to_string(),
             parameter: parameter.to_string(),
             level: level.to_string(),
             forecast_type: forecast_type.to_string(),
         });
-        prev_start_byte = start_byte.parse::<i32>().ok();
+        next_stop_byte = start_byte.parse::<i32>().unwrap().checked_sub(1);
     }
     idx_collection.records.reverse();
     Ok(idx_collection)
