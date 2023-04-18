@@ -33,6 +33,7 @@ mod api {
     use super::*;
     use gfs::gfs_run_is_complete;
     use s3_utils::{build_grib_key_prefix, fetch_list_of_grib_keys};
+    use spin_sdk::http::internal_server_error;
 
     pub fn route_gfs_latest(_req: Request, _params: Params) -> Result<Response> {
         let mut response: HashMap<String, String> = HashMap::new();
@@ -60,18 +61,23 @@ mod api {
                         Ok(json) => Ok(http::Response::builder()
                             .status(http::StatusCode::OK)
                             .body(Some(json.into()))?),
-                        Err(e) => return_server_error(&e.to_string()),
+                        Err(_) => internal_server_error(),
                     }
                 }
-                None => return_server_error("Unable to determine latest run"),
+                None => {
+                    println!("Returning 500: No complete runs were found.");
+                    internal_server_error()
+                }
             }
         } else {
-            return_server_error("Could not determine latest run.")
+            println!("Returning 500: Unable to determine latest run.");
+            internal_server_error()
         }
     }
 
     pub fn route_gfs_idx(_req: Request, _params: Params) -> Result<Response> {
         let now = Utc::now();
+        // TODO: Fix this to actually use latest run or add case to route_gfs_idx_info handler
         let latest_run = dbg!(gfs::determine_latest_possible_run(now));
         if let Some(latest_run) = latest_run {
             let grib_prefix = build_grib_key_prefix(&latest_run);
@@ -81,10 +87,10 @@ mod api {
                 Ok(json) => Ok(http::Response::builder()
                     .status(http::StatusCode::OK)
                     .body(Some(json.into()))?),
-                Err(e) => return_server_error(&e.to_string()),
+                Err(_) => internal_server_error(),
             }
         } else {
-            return_server_error("Could not determine latest run.")
+            internal_server_error()
         }
     }
 
@@ -147,7 +153,7 @@ mod api {
             Ok(json) => Ok(http::Response::builder()
                 .status(http::StatusCode::OK)
                 .body(Some(json.into()))?),
-            Err(e) => return_server_error(&e.to_string()),
+            Err(_) => internal_server_error(),
         }
     }
 
@@ -156,15 +162,6 @@ mod api {
         Ok(http::Response::builder()
             .status(http::StatusCode::OK)
             .body(Some(capture.to_string().into()))?)
-    }
-
-    pub fn return_server_error(message: &str) -> Result<Response> {
-        let mut response = HashMap::new();
-        response.insert("error".to_string(), message.to_string());
-        let response = serde_json::to_string(&response)?;
-        Ok(http::Response::builder()
-            .status(http::StatusCode::INTERNAL_SERVER_ERROR)
-            .body(Some(response.into()))?)
     }
 
     const ACCEPTED_QUERY_PARAMS: [&str; 2] = ["level", "parameter"];
