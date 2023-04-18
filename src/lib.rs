@@ -116,34 +116,34 @@ mod api {
             .unwrap_or_default();
         dbg!(&req);
         dbg!(&params);
-        let mut query_map: Option<HashMap<String, String>> = None;
-        let mut level_filter: Option<String> = None;
-        let mut param_filter: Option<String> = None;
+        let mut query_map: HashMap<String, String> = HashMap::new();
         let uri = req.uri().to_string();
         if let Some(query_string) = uri.split_once('?') {
             dbg!(&query_string);
-            let query_map = parse_query_string(query_string.1);
+            query_map = parse_query_string(query_string.1);
             dbg!(&query_map);
-            if let Some(level_to_filter) = query_map.get("level") {
-                level_filter = Some(level_to_filter.to_string());
-                dbg!(&level_filter);
-            }
         }
 
         let idx_key = build_grib_idx_key(year, month, day, hour, forecast);
         let idx_data = s3_utils::get_s3_object(S3_BUCKET, &idx_key).unwrap();
         let mut idx_collection = gfs::parse_idx_file(&idx_data).unwrap();
-        // response.insert(String::from("year"), year);
-        // response.insert(String::from("month"), month);
-        // response.insert(String::from("day"), day);
-        // response.insert(String::from("hour"), hour);
-        // response.insert(String::from("forecast"), forecast);
-        let mut idx_entries = idx_collection.records;
-        dbg!(&level_filter);
-        if let Some(level_filter) = level_filter {
-            idx_entries.retain(|entry| entry.level == level_filter);
+
+        // Make me an external function
+        for (key, value) in query_map {
+            match key.as_str() {
+                "level" => {
+                    idx_collection.records.retain(|entry| entry.level == value);
+                }
+                "parameter" => {
+                    idx_collection
+                        .records
+                        .retain(|entry| entry.parameter == value.to_uppercase());
+                }
+                _ => {}
+            }
         }
-        match serde_json::to_string(&idx_entries) {
+
+        match serde_json::to_string(&idx_collection.records) {
             Ok(json) => Ok(http::Response::builder()
                 .status(http::StatusCode::OK)
                 .body(Some(json.into()))?),
@@ -167,13 +167,19 @@ mod api {
             .body(Some(response.into()))?)
     }
 
+    const ACCEPTED_QUERY_PARAMS: [&str; 2] = ["level", "parameter"];
+
     pub fn parse_query_string(query_string: &str) -> HashMap<String, String> {
         let mut query_params: HashMap<String, String> = HashMap::new();
         for param in query_string.split('&') {
-            let pair: Vec<&str> = param.split('=').collect();
-            let key = pair[0];
-            let value = pair[1];
-            query_params.insert(key.to_string(), value.to_string());
+            if let Some(pair) = param.split_once('=') {
+                let key = pair.0;
+                let value = pair.1;
+                if !ACCEPTED_QUERY_PARAMS.contains(&key) {
+                    continue;
+                }
+                query_params.insert(key.to_string(), value.to_string());
+            }
         }
         query_params
     }
