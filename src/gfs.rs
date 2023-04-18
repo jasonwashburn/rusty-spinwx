@@ -2,6 +2,7 @@ use super::NUM_EXPECTED_FORECASTS;
 use crate::s3_utils::{build_grib_key_prefix, fetch_list_of_grib_keys, parse_list_bucket_result};
 use anyhow::Result;
 use chrono::{DateTime, Timelike, Utc};
+use log::info;
 use serde::{Deserialize, Serialize};
 
 pub fn gfs_run_is_complete(run: DateTime<Utc>) -> bool {
@@ -14,9 +15,16 @@ pub fn gfs_run_is_complete(run: DateTime<Utc>) -> bool {
             .filter(|content| (!content.key.ends_with(".anl") & !content.key.ends_with(".idx")))
             .collect();
         let num_forecasts = available_forecasts.len();
-        println!("S3 ListBucketResult contains {} keys.", num_forecasts);
+        info!(
+            "GFS Model Run: {run} contains {num_forecasts} forecasts.",
+            run = run.to_rfc3339()
+        );
         (num_forecasts as i32) >= NUM_EXPECTED_FORECASTS
     } else {
+        info!(
+            "GFS Model Run: {run} contains 0 forecasts.",
+            run = run.to_rfc3339()
+        );
         false
     }
 }

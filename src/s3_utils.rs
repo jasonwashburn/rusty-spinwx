@@ -1,6 +1,5 @@
 use super::*;
 use anyhow::Result;
-use http::request::Builder;
 use serde::{Deserialize, Serialize};
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "PascalCase")]
@@ -40,7 +39,7 @@ pub fn build_grib_key_prefix(model_run: &DateTime<Utc>) -> String {
 
 pub fn fetch_list_of_grib_keys(grib_prefix: &str) -> Result<String> {
     let url = format!("https://{S3_BUCKET}.s3.amazonaws.com/?list-type=2&prefix={grib_prefix}");
-    println!("Fetching from URL: {}", url);
+    info!("Fetching from URL: {}", url);
     let mut resp = spin_sdk::outbound_http::send_request(
         http::Request::builder().method("GET").uri(url).body(None)?,
     )?;
@@ -54,7 +53,7 @@ pub fn get_s3_object(
     byte_range: Option<(i32, Option<i32>)>,
 ) -> Result<String> {
     let url = format!("https://{bucket}.s3.amazonaws.com/{key}");
-    println!("Fetching S3 object from URL: {}", url);
+    info!("Fetching S3 object from URL: {}", url);
     let mut request: Request = http::Request::builder().method("GET").uri(url).body(None)?;
     if let Some(byte_range) = byte_range {
         request.headers_mut().insert(

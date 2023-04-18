@@ -1,6 +1,7 @@
 use anyhow::Result;
 use chrono::prelude::*;
 use chrono::DateTime;
+use log::info;
 use spin_sdk::{
     http::{Params, Request, Response, Router},
     http_component,
@@ -16,6 +17,10 @@ const S3_BUCKET: &str = "noaa-gfs-bdp-pds";
 
 #[http_component]
 fn handle_route(req: Request) -> Result<Response> {
+    env_logger::builder()
+        .filter(None, log::LevelFilter::Info)
+        .init();
+    info!("Router received request: {:?}", req);
     let mut router = Router::new();
     router.get("/gfs/latest", api::route_gfs_latest);
     router.get("/gfs/idx", api::route_gfs_idx);
@@ -72,12 +77,12 @@ mod api {
                     }
                 }
                 None => {
-                    println!("Returning 500: No complete runs were found.");
+                    info!("Returning 500: No complete runs were found.");
                     internal_server_error()
                 }
             }
         } else {
-            println!("Returning 500: Unable to determine latest run.");
+            info!("Returning 500: Unable to determine latest run.");
             internal_server_error()
         }
     }
@@ -165,7 +170,7 @@ mod api {
         }
     }
 
-    pub fn route_gfs_grib(req: Request, params: Params) -> Result<Response> {
+    pub fn route_gfs_grib(_req: Request, params: Params) -> Result<Response> {
         let year = params
             .get("year")
             .unwrap_or_default()
