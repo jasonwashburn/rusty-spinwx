@@ -16,8 +16,6 @@ jobs:
       # Python build requires the py2wasm plugin
       - name: Install Spin
         uses: fermyon/actions/spin/setup@v1
-        with:
-          plugins: py2wasm
 
       - name: Install wasm32-wasi Target
         run: rustup target add wasm32-wasi
